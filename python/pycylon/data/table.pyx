@@ -527,14 +527,16 @@ cdef class Table:
         cdef shared_ptr[CTable] output
         cdef vector[int] c_hash_columns
         cdef CStatus status
-
+        print('hash columns:',hash_columns)
         if hash_columns:
             if isinstance(hash_columns[0], int) or isinstance(hash_columns[0], str):
                 for column in hash_columns:
                     if isinstance(column, str):
-                        column = self._resolve_column_index_from_column_name(column)
+                        column = self._resolve_column_index_from_column_name(column) #check
+                        print('column returned:',column)
                     c_hash_columns.push_back(column)
-                status = Shuffle(self.table_shd_ptr, c_hash_columns, output)
+                #print('hashed columns:', c_hash_column)
+                status = Shuffle(self.table_shd_ptr, c_hash_columns, output) #check
                 if status.is_ok():
                     return pycylon_wrap_table(output)
                 else:
@@ -938,7 +940,8 @@ cdef class Table:
             if _dtype != npr.dtype:
                 warnings.warn(
                     "Heterogeneous Cylon Table Detected!. Use Numpy operations with Caution.")
-            ar_lst.append(npr)
+            #print('npr:',npr)
+            ar_lst.append(npr[0]) #changed npr to npr[0] pandas - array([1734120635893173176,8424053371004467815],dtype=uint64)
         npy = np.array(ar_lst).T
         array = np.asfortranarray(npy) if order == 'F' else np.ascontiguousarray(npy)
         return array
@@ -2169,6 +2172,7 @@ cdef class Table:
             3      4      8     12
         """
         cdef bool c_drop_index = drop_index
+        print('got here')
         self.table_shd_ptr.get().ResetArrowIndex(c_drop_index)
 
     def dropna(self, axis=0, how='any', inplace=False):
@@ -2500,7 +2504,7 @@ cdef class Table:
                 if field_id == 0:
                     new_field = field
                 else:
-                    new_field = field.with_type(arrow_type)
+                    new_field = field.with_type(arrow_type) #create new field
                 schema = schema.set(field_id, new_field)
             casted_artb = artb.cast(schema, safe)
             new_cn_table = Table.from_arrow(self.context, casted_artb)

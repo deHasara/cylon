@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from copy import copy
-from typing import Hashable, List, Dict, Optional, Sequence, Union
+from typing import Hashable, List, Dict, Optional, Sequence, Union, FrozenSet
 
 import numpy as np
 import pandas
@@ -26,12 +26,16 @@ import pyarrow as pa
 
 import pycylon as cn
 import pycylon.data as pcd
+from pandas.core.dtypes.common import infer_dtype_from_object
 from pycylon import CylonContext
 from pycylon import Series
 from pycylon.data.table import SortOptions
 from pycylon.index import RangeIndex, CategoricalIndex
 from pycylon.io import CSVReadOptions
 from pycylon.io import CSVWriteOptions
+
+from pycylon.indexing.index import IndexingType
+from pycylon.indexing.index import PyLocIndexer
 
 DEVICE_CPU = "cpu"
 
@@ -292,6 +296,8 @@ class DataFrame(object):
                 columns = rename_with_new_column_names(data, columns)
                 data = data.rename(columns=columns)
             return data
+        elif not data:
+            return cn.Table.from_pydict(context, {})
         else:
             raise ValueError(f"Invalid data structure, {type(data)}")
 
@@ -351,6 +357,240 @@ class DataFrame(object):
 
     def to_csv(self, path, csv_write_options: CSVWriteOptions):
         self._table.to_csv(path=path, csv_write_options=csv_write_options)
+
+    def __len__(self):
+        return self._table.row_count
+
+    @property
+    def iloc(self) -> PyLocIndexer:
+        return self._table.iloc
+        # return DataFrame._initialize_dataframe(self._table.iloc)
+        # ct = self._table.iloc
+        # return DataFrame(ct.to_arrow())
+        print('iloc frame :', type(self._table.iloc))
+        #ct = self._table.iloc
+        #print(ct, type(ct))
+        #pat = ct.to_arrow()
+        #cdf = DataFrame(pat)  # get meta as pycylon.DataFrame type
+        #print('after conversion: ', type(cdf))
+        #print(cdf)
+        #return cdf
+        return self._table.iloc
+
+    def set_index(self, key, indexing_type: IndexingType = IndexingType.LINEAR, drop: bool = False):
+        return self._table.set_index(key, indexing_type, drop)
+
+    @property  # this way can call cdf.index, otherwise should call cdf.index()
+    def index(self):
+        return self._table.get_index()  # returns index of self_table, self is pycylon.DataFrame
+        # print('self index:', self._index)
+        # return self._index
+
+    def get_hash_object(self, index=True, encoding="utf8", hash_key=None, categorize=True):
+        pdf = self.to_pandas()
+        hashed_series = pd.util.hash_pandas_object(pdf, index=index, encoding=encoding, hash_key=hash_key, categorize=categorize)
+        hashed_pdf = hashed_series.to_frame() #since pycylon takes only pandas Dataframe
+        context = CylonContext(config=None, distributed=False) #self.context, context as function arguement
+        return DataFrame(cn.Table.from_pandas(context, hashed_pdf))
+
+    @property
+    def values(self) -> np.ndarray:
+        print('values np array:', self.to_numpy())
+        return self.to_numpy()
+
+    def serialize(self):
+        print('in cylon serialize')
+
+    @property
+    def dtypes(self):
+        schema = self._table.to_arrow().schema
+        dict = {}
+        types = schema.types
+        '''
+        for i in len(types):
+            if pa.types.is_int8(types[i]):
+                types[i] = cn.types.int8()
+            elif pa.types.is_int16(types[i]):
+                types[i] = cn.types.int16()
+            elif pa.types.is_int32(types[i]):
+                types[i] = cn.types.int32()
+            elif pa.types.is_int64(types[i]):
+                types[i] = cn.types.int64()
+            elif pa.types.is_uint8(types[i]):
+                types[i] = cn.types.uint8()
+            elif pa.types.is_uint16(types[i]):
+                types[i] = cn.types.uint16()
+            elif pa.types.is_uint32(types[i]):
+                types[i] = cn.types.uint32()
+            elif pa.types.is_uint64(types[i]):
+                types[i] = cn.types.uint64()
+            elif pa.types.is_floating(types[i]):
+                types[i] = cn.types.float()
+            elif pa.types.is_int32(types[i]):
+                types[i] = cn.types.int32()
+            elif pa.types.is_int32(types[i]):
+                types[i] = cn.types.int32()
+            elif pa.types.is_int32(types[i]):
+                types[i] = cn.types.int32()
+            elif pa.types.is_int32(types[i]):
+                types[i] = cn.types.int32()
+            elif pa.types.is_int32(types[i]):
+                types[i] = cn.types.int32()
+            elif pa.types.is_int32(types[i]):
+                types[i] = cn.types.int32()
+        '''
+        i = 0
+        for value in schema.names:
+            dict[value] = pa.DataType.to_pandas_dtype(types[i])  # need to convert to pandas dtype for dask
+            i += 1
+
+        return dict #in pandas return type is series
+
+        # return self._table.to_arrow().schema
+
+    def select_dtypes(self, include=None, exclude=None) -> DataFrame:
+        """
+                Return a subset of the DataFrame's columns based on the column dtypes.
+
+                Parameters
+                ----------
+                include, exclude : scalar or list-like
+                    A selection of dtypes or strings to be included/excluded. At least
+                    one of these parameters must be supplied.
+
+                Returns
+                -------
+                DataFrame
+                    The subset of the frame including the dtypes in ``include`` and
+                    excluding the dtypes in ``exclude``.
+
+                Raises
+                ------
+                ValueError
+                    * If both of ``include`` and ``exclude`` are empty
+                    * If ``include`` and ``exclude`` have overlapping elements
+                    * If any kind of string dtype is passed in.
+        """
+        if not isinstance(include, (list, tuple)):
+            include = (include,) if include is not None else ()
+        if not isinstance(exclude, (list, tuple)):
+            exclude = (exclude,) if exclude is not None else ()
+
+        print('include:',include)
+        print('exclude:',exclude)
+
+        selection = (frozenset(include), frozenset(exclude))
+        print(selection)
+
+        if not any(selection):
+            raise ValueError("at least one of include or exclude must be nonempty")
+
+        include = frozenset(infer_dtype_from_object(x) for x in include)
+        exclude = frozenset(infer_dtype_from_object(x) for x in exclude)
+
+        print('include inferred:',include)
+        print('exclude inferred:', exclude)
+
+        if not include.isdisjoint(exclude):
+            raise ValueError(
+                f"include and exclude overlap on {(include & exclude)}"
+            )
+
+        def extract_unique_dtypes_from_dtypes_set(dtypes_set: FrozenSet[np.generic], unique_dtypes: np.ndarray) -> List[
+            np.generic]:
+            extracted_dtypes = [
+                unique_dtype
+                for unique_dtype in unique_dtypes
+                # error: Argument 1 to "tuple" has incompatible type
+                # "FrozenSet[Union[ExtensionDtype, str, Any, Type[str],
+                # Type[float], Type[int], Type[complex], Type[bool]]]";
+                # expected "Iterable[Union[type, Tuple[Any, ...]]]"
+                if issubclass(
+                    # here no need to put unique_dtypes.type -> already gets type
+                    unique_dtype, tuple(dtypes_set)  # type: ignore[arg-type]
+                )
+            ]
+            return extracted_dtypes
+
+        #get unique dtypes from cylon df - set operation
+        unique_set = set(self.dtypes.values())
+        unique_dtypes = np.array(list(unique_set), dtype=object)
+
+
+        if include:
+            included_dtypes = extract_unique_dtypes_from_dtypes_set(include, unique_dtypes)
+            print('included_dtypes:', included_dtypes)
+            #not handled - when extracted_columns are empty
+            extracted_columns=[
+                column
+                for column, dtype in self.dtypes.items()
+                if dtype in included_dtypes
+            ]
+
+        if exclude:
+            #include=['int64'] exclude=['bool'] -> only columns of int64 returned
+            if include:
+                # include given priority always, so need to execute exclude
+                """
+                pandas example
+                df
+                       b    c
+                0   True  1.0
+                1  False  2.0
+                2   True  1.0
+                3  False  2.0
+                4   True  1.0
+                5  False  2.0
+                >>> df.select_dtypes(include='category',exclude='int64') # include given priority always
+                Empty DataFrame
+                Columns: []
+                Index: [0, 1, 2, 3, 4, 5]
+
+                """
+                pass
+            else:
+                excluded_dtypes = extract_unique_dtypes_from_dtypes_set(exclude, unique_dtypes)
+                print('excluded dtypes:', excluded_dtypes)
+
+                extracted_columns = [
+                    column
+                    for column, dtype in self.dtypes.items()
+                    if dtype not in excluded_dtypes
+                ]
+
+        if extracted_columns:
+            print(self.iloc[:, extracted_columns])
+            return DataFrame(self.iloc[:, extracted_columns].to_arrow())
+        else:
+            return DataFrame()
+
+            #when list is empty- means no asked dtypes found in df -> self.iloc[:,[]] gives error ->empty df ->so cannot call .columns from it
+            #need to support empty cylon df
+            """
+            pandas example
+            >>>df.select_dtypes(include='category')
+            Empty DataFrame
+            Columns: []
+            Index: [0, 1, 2, 3, 4, 5]
+            >>>df.select_dtypes(include='category').columns <- this is needed for categorical call in dask -> multi
+            'categorical_columns is not None' passes but actual list is empty when no categorical columns found (checks in mulit)
+            list1 = [col for col in df1.columns]
+            >>> list1
+            []
+            """
+            # return DataFrame() <- return empty df, should implement this in cylon
+            #raise NotImplementedError('not handled empty data frames')
+
+
+        #cannot do this coz it sets all columns, we need a way to intialize without columns
+        """
+        #for the time being just return empty df with 4 rows, as dummy df has 4 rows(2+2)
+        ct = self.iloc[0:0]  # returns table (head) 
+        cdf = DataFrame(ct.to_arrow()) #empty df
+        cdf.set_index([0,1,3]) # 4 rows index
+        #return cdf
+        return None #temporarily need to implement this
+        """
 
     def __getitem__(self, item) -> DataFrame:
         """
@@ -1250,14 +1490,14 @@ class DataFrame(object):
     def reset_index(  # type: ignore[misc]
             self,
             level: Optional[Union[Hashable, Sequence[Hashable]]] = ...,
-            drop: bool = ...,
+            drop: bool = True,
             inplace: False = ...,
             col_level: Hashable = ...,
             col_fill=...,
     ) -> DataFrame:
         # todo this is not a final implementation
         self._index_columns = []
-        self._table.reset_index(drop=drop)
+        self._table.reset_index(drop_index=drop) #changed drop to drop_index
         return self
 
     # Combining / joining / merging
@@ -1702,6 +1942,7 @@ class DataFrame(object):
         2   bar      7
         3   bar      8
         """
+        print('cols passed to merge:',on, left_on, right_on)
         if not on is None:
             left_on = on
             right_on = on
@@ -1942,7 +2183,134 @@ class DataFrame(object):
         1  11.262736  20.857489
         """
         return DataFrame(self._table.applymap(func))
+    '''
+    def concat(objs: Union[Iterable["DataFrame"]], axis=0, join="outer",
+               env: CylonEnv = None) -> DataFrame:
+        """
+        Concatenate DataFrames along a particular axis with optional set logic
+        along the other axes.
+        Can also add a layer of hierarchical indexing on the concatenation axis,
+        which may be useful if the labels are the same (or overlapping) on
+        the passed axis number.
 
+        Cylon currently support concat along axis=0, for DataFrames having the same schema(Union).
+
+        Parameters
+        ----------
+        objs : a sequence or mapping of Series or DataFrame objects
+            If a mapping is passed, the sorted keys will be used as the `keys`
+            argument, unless it is passed, in which case the values will be
+            selected (see below). Any None objects will be dropped silently unless
+            they are all None in which case a ValueError will be raised.
+        axis : {0/'index', 1/'columns' (Unsupported)}, default 0
+            The axis to concatenate along.
+        join : {'inner', 'outer'}, default 'outer'
+            How to handle indexes on other axis (or axes).
+        env: Execution environment used to distinguish between distributed and local operations. default None (local env)
+        Returns
+        -------
+        object, type of objs
+            When concatenating along
+            the columns (axis=1) or rows (axis=0), a ``DataFrame`` is returned.
+
+        Examples
+        --------
+
+        Combine two ``DataFrame`` objects with identical columns.
+
+        >>> df1 = DataFrame([['a', 1], ['b', 2]],
+        ...                    columns=['letter', 'number'])
+        >>> df1
+        letter  number
+        0      a       1
+        1      b       2
+        >>> df2 = DataFrame([['c', 3], ['d', 4]],
+        ...                    columns=['letter', 'number'])
+        >>> df2
+        letter  number
+        0      c       3
+        1      d       4
+        >>> DataFrame.concat([df1, df2])
+        letter  number
+        0      a       1
+        1      b       2
+        0      c       3
+        1      d       4
+
+        (Unsupported) Combine ``DataFrame`` objects with overlapping columns
+        and return everything. Columns outside the intersection will
+        be filled with ``NaN`` values.
+
+        >>> df3 = DataFrame([['c', 3, 'cat'], ['d', 4, 'dog']],
+        ...                    columns=['letter', 'number', 'animal'])
+        >>> df3
+        letter  number animal
+        0      c       3    cat
+        1      d       4    dog
+        >>> DataFrame.concat([df1, df3])
+        letter  number animal
+        0      a       1    NaN
+        1      b       2    NaN
+        0      c       3    cat
+        1      d       4    dog
+
+        (Unsupported) Combine ``DataFrame`` objects with overlapping columns
+        and return only those that are shared by passing ``inner`` to
+        the ``join`` keyword argument.
+
+        >>> DataFrame.concat([df1, df3],join="inner")
+        letter  number
+        0      a       1
+        1      b       2
+        0      c       3
+        1      d       4
+
+        (Unsupported) Combine ``DataFrame`` objects horizontally along the x axis by
+        passing in ``axis=1``.
+
+        >>> df4 = DataFrame([['bird', 'polly'], ['monkey', 'george']],
+        ...                    columns=['animal', 'name'])
+        >>> DataFrame.concat([df1, df4],axis=1)
+
+        letter  number  animal    name
+        0      a       1    bird   polly
+        1      b       2  monkey  george
+
+        (Unsupported) Prevent the result from including duplicate index values with the
+        ``verify_integrity`` option.
+
+        >>> df5 = DataFrame([1], index=['a'])
+        >>> df5
+        0
+        a  1
+        >>> df6 = DataFrame([2], index=['a'])
+        >>> df6
+        0
+        a  2
+        >>> DataFrame.concat([df5, df6])
+        Traceback (most recent call last):
+            ...
+        ValueError: Indexes have overlapping values: ['a']
+        """
+        # ignore_index: bool = False,
+        # keys=None,
+        # levels=None,
+        # names=None,
+        # verify_integrity: bool = False,
+        # sort: bool = False,
+        # copy: bool = True,
+
+        if len(objs) == 0:
+            raise ValueError("objs can't be empty")
+
+        if env is None:
+            res_table = cn.Table.concat(tables=[df.to_table() for df in objs], axis=axis, join=join)
+        else:
+            res_table = cn.Table.distributed_concat(
+                tables=[df._change_context(env).to_table() for df in objs],
+                axis=axis, join=join)
+        return DataFrame(res_table)
+    '''
 
 # -------------------- staticmethods ---------------------------
 
@@ -2072,3 +2440,4 @@ def concat(objs: Union[Iterable["DataFrame"]], axis=0, join="outer",
             tables=[df._change_context(env).to_table() for df in objs],
             axis=axis, join=join)
     return DataFrame(res_table)
+

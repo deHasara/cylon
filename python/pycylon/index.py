@@ -36,6 +36,8 @@ class Index(object):
         return self
 
 
+
+
 class NumericIndex(Index):
     # TODO: Extend Index Utils and Functions: https://github.com/cylondata/cylon/issues/230
     def __init__(self, data):

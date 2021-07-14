@@ -39,6 +39,7 @@ arrow::Status build_final_table_inplace_index(size_t left_inplace_column, size_t
   // creating joined schema
   std::vector<std::shared_ptr<arrow::Field>> fields;
   // TODO: get left and right suffixes from user if needed and update it here and replace in the schema with newfileds
+  // ToDo : Hasara
   std::string  prefix = left_table_prefix;
   for(const auto &t: {left_tab, right_tab}){
     for (const auto &field: t->schema()->fields()){
@@ -96,6 +97,7 @@ arrow::Status build_final_table_inplace_index(size_t left_inplace_column, size_t
   }
   right_index_sorted_column.reset();
   // build arrays for right tab
+  //ToDo -Hasara
   const std::vector<std::shared_ptr<arrow::ChunkedArray>> &rvector = right_tab->columns();
   for (size_t i = 0; i < rvector.size(); i++) {
     std::shared_ptr<arrow::ChunkedArray> ca = rvector[i];

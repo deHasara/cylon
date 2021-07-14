@@ -39,6 +39,11 @@ from cython.operator cimport dereference as deref, preincrement as inc
 from typing import List, Tuple
 from pycylon.data.compute import compare_array_like_values
 
+#astype imports
+from pandas.core.dtypes.common import pandas_dtype
+from pycylon.indexing.index_utils import IndexUtil
+from pycylon.indexing.index import IndexingType
+
 '''
 Cylon Indexing is done with the following enums. 
 '''
@@ -67,7 +72,7 @@ def _resolve_column_index_from_column_name(column_name, cn_table) -> int:
     else:
         raise ValueError("column_name must be str or int")
 
-
+#add function astype -> arrow table cast, schema handling
 cdef class BaseArrowIndex:
     cdef void init(self, const shared_ptr[CBaseArrowIndex]& index):
         self.bindex_shd_ptr = index
@@ -101,6 +106,38 @@ cdef class BaseArrowIndex:
             return res_isin.to_numpy(zero_copy_only=zero_copy_only)
         else:
             raise ValueError("values must be List or np.ndarray")
+
+    @property
+    def dtype(self):
+        #dtype of index is equal to dtype of first element in the values of index
+        return type(self.values[0])  #self.values returns array made of indices [0,1,1] for set_index([0,1,1])
+
+
+    def astype(self, dtype, copy=True):
+        if dtype is not None:
+            dtype = pandas_dtype(dtype)
+
+        #if is_dtype_equal(self.dtype, dtype):
+        #    return self.copy() if copy else self <- need to implement copy in BaseArrowIndex class
+
+        try:
+            casted = self.values.astype(dtype, copy=copy)
+        except (TypeError, ValueError) as err:
+            raise TypeError(
+                f"Cannot cast to dtype {dtype}"
+            ) from err
+        arrow_index_array = pa.array(casted)
+        return return IndexUtil.build_arrow_index_from_pyarrow(IndexingType.LINEAR, table, arrow_index_array)
+        #return BaseArrowIndex(casted)
+
+
+
+
+
+
+
+
+
 
 
 cdef class ArrowLocIndexer:
